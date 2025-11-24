@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import os
 import sys
 import subprocess
@@ -39,10 +38,8 @@ def load_config():
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, 'w') as f:
             f.write("""# persist-ssh configuration
-
 # Use current tmux window name as session name
 session_from_tmux_pane = true
-
 # Default session name when not in tmux
 default_session_name = "main"
 
@@ -103,15 +100,43 @@ def run_ssh_command(host, command, need_tty=False):
     except subprocess.CalledProcessError as e:
         return e.stderr.strip(), False
 
-def check_dtach_installed(host):
-    """Check if dtach is installed on remote host"""
-    output, success = run_ssh_command(host, 'which dtach')
-    return success
+def run_ssh_commands_batch(host, commands):
+    """Run multiple commands in a single SSH session"""
+    # Combine commands with && to run them in sequence
+    combined_command = ' && '.join(commands)
+    return run_ssh_command(host, combined_command)
 
-def check_mosh_installed(host):
-    """Check if mosh-server is installed on remote host"""
-    output, success = run_ssh_command(host, 'which mosh-server')
-    return success
+def check_and_setup_remote(host, debug=False):
+    """Check what's installed and set up everything in one go"""
+    if debug:
+        print("Checking remote setup in batch...")
+    
+    # Single command to check everything and setup
+    setup_script = """
+    # Check if dtach exists
+    if command -v dtach >/dev/null 2>&1; then
+        echo "DTACH_OK"
+    else
+        echo "DTACH_MISSING"
+    fi
+    
+    # Create persist-ssh directory
+    mkdir -p ~/.persist-ssh
+    echo "SETUP_COMPLETE"
+    """
+    
+    output, success = run_ssh_command(host, setup_script)
+    
+    if not success:
+        return False, "Failed to run setup script"
+    
+    dtach_ok = "DTACH_OK" in output
+    setup_complete = "SETUP_COMPLETE" in output
+    
+    if debug:
+        print(f"Batch setup result: dtach_ok={dtach_ok}, setup_complete={setup_complete}")
+    
+    return dtach_ok, output
 
 def detect_remote_os(host):
     """Detect the remote OS to choose install command"""
@@ -162,10 +187,8 @@ def install_dtach(host, config):
 def install_mosh(host, config):
     """Install mosh on remote host"""
     os_type = detect_remote_os(host)
-    print(f"Debug: OS type detected as: {os_type}")  # Debug line
     
     install_commands = config.get('mosh_install_command', {})
-    print(f"Debug: Available install commands: {list(install_commands.keys())}")  # Debug line
     
     if os_type in install_commands:
         cmd = install_commands[os_type]
@@ -187,12 +210,11 @@ def install_mosh(host, config):
 
 def list_remote_sessions(host):
     """List existing dtach sessions on remote host"""
-    # Use a simple Python one-liner to list sessions
+    # Use .persist-ssh directory for sessions
     cmd = """python3 -c "
 import os
 from pathlib import Path
-runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
-session_dir = Path(runtime_dir) / 'simple-dtach-sessions'
+session_dir = Path.home() / '.persist-ssh'
 if session_dir.exists():
     sessions = [f.name for f in session_dir.iterdir() if f.is_socket()]
     if sessions:
@@ -211,23 +233,39 @@ else:
         print("Could not list sessions")
 
 def connect_to_session(host, session_name, debug=False):
-    """Connect via mosh and attach to/create session"""
-    # We need to have dtach available remotely for this to work
-    # For now, use basic dtach command
-    dtach_cmd = f"dtach -A ~/.dtach/{session_name} bash"
-    
+    """Connect via SSH with a single call that handles everything"""
     if debug:
         print(f"Connecting to {host}, session: {session_name}")
-        print(f"Remote command: {dtach_cmd}")
     
-    # Use mosh to connect and run dtach
-    mosh_cmd = ['mosh', host, '--', 'dtach', '-A', f'~/.dtach/{session_name}', 'bash']
+    # Single SSH command that:
+    # 1. Checks if dtach exists
+    # 2. Creates directory if needed
+    # 3. Starts/attaches to session with Ctrl+T as detach key
+    # 4. Falls back to plain bash if dtach missing
+    
+    single_command = f'''
+        # Create session directory
+        mkdir -p ~/.persist-ssh
+        
+        # Check if dtach is available and try to use it
+        if command -v dtach >/dev/null 2>&1; then
+            echo "Starting persistent session: {session_name} (Ctrl+T to detach)"
+            exec dtach -A ~/.persist-ssh/{session_name} -e "^T" bash
+        else
+            echo "dtach not found - starting regular shell"
+            echo "Install dtach for persistent sessions: sudo apt install dtach"
+            exec bash
+        fi
+    '''
+    
+    ssh_cmd = ['ssh', '-t', host, single_command]
     
     if debug:
-        print(f"Running: {' '.join(mosh_cmd)}")
+        print(f"Running single SSH command with Ctrl+T detach")
+        print(f"Command: {single_command.strip()}")
     
     try:
-        subprocess.run(mosh_cmd)
+        subprocess.run(ssh_cmd)
     except KeyboardInterrupt:
         print("\nDisconnected.")
     except Exception as e:
@@ -237,7 +275,7 @@ def main():
     config = load_config()
     
     parser = argparse.ArgumentParser(
-        description='Persistent SSH connections via mosh + dtach',
+        description='Persistent SSH connections via SSH + dtach',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -258,31 +296,16 @@ Examples:
         list_remote_sessions(args.host)
         return
     
-    # Check if mosh is installed
-    if not check_mosh_installed(args.host):
-        print("mosh-server not found on remote host. Installing...")
-        if not install_mosh(args.host, config):
-            print("Failed to install mosh. Exiting.")
-            sys.exit(1)
-    
-    # Check if dtach is installed
-    if not check_dtach_installed(args.host):
-        print("dtach not found on remote host. Installing...")
-        if not install_dtach(args.host, config):
-            print("Failed to install dtach. Exiting.")
-            sys.exit(1)
-    
     # Determine session name
     session_name = get_session_name(config, args.session)
     
     if args.debug:
-        print(f"Config: {config}")
         print(f"Session name: {session_name}")
         if config.get('session_from_tmux_pane'):
             tmux_name = get_tmux_window_name()
             print(f"Tmux window name: {tmux_name}")
     
-    # Connect to session
+    # Single SSH connection that handles everything
     connect_to_session(args.host, session_name, args.debug)
 
 if __name__ == '__main__':
