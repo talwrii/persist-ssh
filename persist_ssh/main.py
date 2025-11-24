@@ -7,8 +7,8 @@ import tomllib
 from pathlib import Path
 
 DEFAULT_CONFIG = {
-    'session_from_tmux_pane': True,
-    'default_session_name': 'main',
+    'session_from_tmux_pane': False,
+    'default_session_name': 'default',  # Changed from 'main' to 'default'
     'dtach_install_command': {
         'ubuntu': 'sudo apt update && sudo apt install -y dtach',
         'debian': 'sudo apt update && sudo apt install -y dtach',
@@ -38,10 +38,10 @@ def load_config():
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, 'w') as f:
             f.write("""# persist-ssh configuration
-# Use current tmux window name as session name
-session_from_tmux_pane = true
-# Default session name when not in tmux
-default_session_name = "main"
+# Use current tmux window name as session name (set to true to enable)
+session_from_tmux_pane = false
+# Default session name when not using tmux window names
+default_session_name = "default"
 
 # Commands to install dtach on different systems
 [dtach_install_command]
@@ -84,7 +84,7 @@ def get_session_name(config, override_name=None):
         if tmux_name:
             return tmux_name
     
-    return config.get('default_session_name', 'main')
+    return config.get('default_session_name', 'default')
 
 def run_ssh_command(host, command, need_tty=False):
     """Run a command on remote host via SSH and return result"""
@@ -100,43 +100,7 @@ def run_ssh_command(host, command, need_tty=False):
     except subprocess.CalledProcessError as e:
         return e.stderr.strip(), False
 
-def run_ssh_commands_batch(host, commands):
-    """Run multiple commands in a single SSH session"""
-    # Combine commands with && to run them in sequence
-    combined_command = ' && '.join(commands)
-    return run_ssh_command(host, combined_command)
-
-def check_and_setup_remote(host, debug=False):
-    """Check what's installed and set up everything in one go"""
-    if debug:
-        print("Checking remote setup in batch...")
-    
-    # Single command to check everything and setup
-    setup_script = """
-    # Check if dtach exists
-    if command -v dtach >/dev/null 2>&1; then
-        echo "DTACH_OK"
-    else
-        echo "DTACH_MISSING"
-    fi
-    
-    # Create persist-ssh directory
-    mkdir -p ~/.persist-ssh
-    echo "SETUP_COMPLETE"
-    """
-    
-    output, success = run_ssh_command(host, setup_script)
-    
-    if not success:
-        return False, "Failed to run setup script"
-    
-    dtach_ok = "DTACH_OK" in output
-    setup_complete = "SETUP_COMPLETE" in output
-    
-    if debug:
-        print(f"Batch setup result: dtach_ok={dtach_ok}, setup_complete={setup_complete}")
-    
-    return dtach_ok, output
+# Remove these unused functions since we're SSH-only now
 
 def detect_remote_os(host):
     """Detect the remote OS to choose install command"""
@@ -247,14 +211,49 @@ def connect_to_session(host, session_name, debug=False):
         # Create session directory
         mkdir -p ~/.persist-ssh
         
-        # Check if dtach is available and try to use it
+        # Detect user's shell (fallback to bash if not found)
+        USER_SHELL=$(getent passwd $USER | cut -d: -f7)
+        if [ -z "$USER_SHELL" ] || [ ! -x "$USER_SHELL" ]; then
+            USER_SHELL=/bin/bash
+        fi
+        
+        # Check if dtach is available
         if command -v dtach >/dev/null 2>&1; then
             echo "Starting persistent session: {session_name} (Ctrl+T to detach)"
-            exec dtach -A ~/.persist-ssh/{session_name} -e "^T" bash
+            exec dtach -A ~/.persist-ssh/{session_name} -e "^T" $USER_SHELL
         else
-            echo "dtach not found - starting regular shell"
-            echo "Install dtach for persistent sessions: sudo apt install dtach"
-            exec bash
+            echo "dtach not found - attempting to install..."
+            
+            # Try to install dtach based on available package manager
+            if command -v apt >/dev/null 2>&1; then
+                sudo apt update && sudo apt install -y dtach
+            elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y dtach
+            elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y dtach
+            elif command -v pacman >/dev/null 2>&1; then
+                sudo pacman -S --noconfirm dtach
+            elif command -v apk >/dev/null 2>&1; then
+                sudo apk add dtach
+            else
+                echo "Could not detect package manager. Please install dtach manually:"
+                echo "  Ubuntu/Debian: sudo apt install dtach"
+                echo "  RHEL/CentOS:   sudo yum install dtach"
+                echo "  Fedora:        sudo dnf install dtach"
+                echo "  Arch:          sudo pacman -S dtach"
+                echo "  Alpine:        sudo apk add dtach"
+                exec $USER_SHELL
+            fi
+            
+            # Check if installation succeeded
+            if command -v dtach >/dev/null 2>&1; then
+                echo "dtach installed successfully!"
+                echo "Starting persistent session: {session_name} (Ctrl+T to detach)"
+                exec dtach -A ~/.persist-ssh/{session_name} -e "^T" $USER_SHELL
+            else
+                echo "Failed to install dtach. Starting regular shell."
+                exec $USER_SHELL
+            fi
         fi
     '''
     
@@ -279,9 +278,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  persist-ssh myserver                    # Connect using tmux window name or default
+  persist-ssh myserver                    # Connect using default session name
   persist-ssh myserver --session dev      # Connect to specific session
-  persist-ssh myserver --list            # List active sessions
+  persist-ssh myserver --tmux             # Use current tmux window name as session
+  persist-ssh myserver --list             # List active sessions
         """
     )
     
@@ -289,6 +289,7 @@ Examples:
     parser.add_argument('--session', '-s', help='Session name (overrides config)')
     parser.add_argument('--list', '-l', action='store_true', help='List remote sessions')
     parser.add_argument('--debug', '-d', action='store_true', help='Show debug output')
+    parser.add_argument('--tmux', '-t', action='store_true', help='Use tmux window name as session name')
     
     args = parser.parse_args()
     
@@ -296,8 +297,17 @@ Examples:
         list_remote_sessions(args.host)
         return
     
-    # Determine session name
-    session_name = get_session_name(config, args.session)
+    # Determine session name with --tmux flag override
+    if args.tmux:
+        # Force tmux window name usage regardless of config
+        tmux_name = get_tmux_window_name()
+        if tmux_name:
+            session_name = tmux_name
+        else:
+            print("Warning: Not in tmux or tmux not found, using default session name")
+            session_name = config.get('default_session_name', 'default')
+    else:
+        session_name = get_session_name(config, args.session)
     
     if args.debug:
         print(f"Session name: {session_name}")
