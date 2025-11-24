@@ -11,10 +11,18 @@ DEFAULT_CONFIG = {
     'session_from_tmux_pane': True,
     'default_session_name': 'main',
     'dtach_install_command': {
+        'ubuntu': 'sudo apt update && sudo apt install -y dtach',
         'debian': 'sudo apt update && sudo apt install -y dtach',
         'redhat': 'sudo yum install -y dtach || sudo dnf install -y dtach',
         'arch': 'sudo pacman -S dtach',
         'alpine': 'sudo apk add dtach'
+    },
+    'mosh_install_command': {
+        'ubuntu': 'sudo apt update && sudo apt install -y mosh',
+        'debian': 'sudo apt update && sudo apt install -y mosh',
+        'redhat': 'sudo yum install -y mosh || sudo dnf install -y mosh',
+        'arch': 'sudo pacman -S mosh',
+        'alpine': 'sudo apk add mosh'
     }
 }
 
@@ -40,10 +48,19 @@ default_session_name = "main"
 
 # Commands to install dtach on different systems
 [dtach_install_command]
+ubuntu = "sudo apt update && sudo apt install -y dtach"
 debian = "sudo apt update && sudo apt install -y dtach"
 redhat = "sudo yum install -y dtach || sudo dnf install -y dtach"
 arch = "sudo pacman -S dtach"
 alpine = "sudo apk add dtach"
+
+# Commands to install mosh on different systems
+[mosh_install_command]
+ubuntu = "sudo apt update && sudo apt install -y mosh"
+debian = "sudo apt update && sudo apt install -y mosh"
+redhat = "sudo yum install -y mosh || sudo dnf install -y mosh"
+arch = "sudo pacman -S mosh"
+alpine = "sudo apk add mosh"
 """)
         print(f"Created default config at {config_path}")
         return DEFAULT_CONFIG
@@ -91,6 +108,11 @@ def check_dtach_installed(host):
     output, success = run_ssh_command(host, 'which dtach')
     return success
 
+def check_mosh_installed(host):
+    """Check if mosh-server is installed on remote host"""
+    output, success = run_ssh_command(host, 'which mosh-server')
+    return success
+
 def detect_remote_os(host):
     """Detect the remote OS to choose install command"""
     # Try to detect OS
@@ -99,9 +121,12 @@ def detect_remote_os(host):
         return 'unknown'
     
     output = output.lower()
-    if 'ubuntu' in output or 'debian' in output:
+    
+    if 'ubuntu' in output:
+        return 'ubuntu'
+    elif 'debian' in output:
         return 'debian'
-    elif 'rhel' in output or 'centos' in output or 'fedora' in output:
+    elif 'rhel' in output or 'centos' in output or 'fedora' in output or 'red hat' in output:
         return 'redhat'
     elif 'arch' in output:
         return 'arch'
@@ -132,6 +157,32 @@ def install_dtach(host, config):
             return False
     else:
         print(f"Don't know how to install dtach on {os_type}. Please install manually.")
+        return False
+
+def install_mosh(host, config):
+    """Install mosh on remote host"""
+    os_type = detect_remote_os(host)
+    print(f"Debug: OS type detected as: {os_type}")  # Debug line
+    
+    install_commands = config.get('mosh_install_command', {})
+    print(f"Debug: Available install commands: {list(install_commands.keys())}")  # Debug line
+    
+    if os_type in install_commands:
+        cmd = install_commands[os_type]
+        print(f"Installing mosh on {host} ({os_type})...")
+        print("You may be prompted for your password...")
+        
+        # Use TTY for sudo commands
+        result = subprocess.run(['ssh', '-t', host, cmd])
+        
+        if result.returncode == 0:
+            print("mosh installed successfully")
+            return True
+        else:
+            print("Failed to install mosh")
+            return False
+    else:
+        print(f"Don't know how to install mosh on {os_type}. Please install manually.")
         return False
 
 def list_remote_sessions(host):
@@ -206,6 +257,13 @@ Examples:
     if args.list:
         list_remote_sessions(args.host)
         return
+    
+    # Check if mosh is installed
+    if not check_mosh_installed(args.host):
+        print("mosh-server not found on remote host. Installing...")
+        if not install_mosh(args.host, config):
+            print("Failed to install mosh. Exiting.")
+            sys.exit(1)
     
     # Check if dtach is installed
     if not check_dtach_installed(args.host):
