@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persist-ssh"
-version = "1.0.0"
+version = "1.0.1"
 description = "Persistent SSH using dtach. Does not break scrollback. Use tmux locally."
 readme = "README.md"
-license = "GPL"
+license = "GPLv3"
 authors = [
     { name = "@readwithai", email = "talwrii@gmail.com" },
 ]
