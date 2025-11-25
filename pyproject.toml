@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persist-ssh"
-version = "0.1.0"
-description = "Persistent SSH connections via mosh + dtach with tmux integration"
+version = "1.0.0"
+description = "Persistent SSH using dtach. Does not break scrollback. Use tmux locally."
 readme = "README.md"
-license = "ISC"
+license = "GPL"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" },
+    { name = "@readwithai", email = "talwrii@gmail.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -26,13 +26,13 @@ classifiers = [
     "Topic :: System :: Shells",
     "Topic :: Terminals",
 ]
-keywords = ["ssh", "mosh", "dtach", "tmux", "persistent", "terminal", "session"]
+keywords = ["ssh", "dtach", "tmux", "persistent", "terminal", "session"]
 requires-python = ">=3.11"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/persist-ssh"
-Repository = "https://github.com/yourusername/persist-ssh"
-Issues = "https://github.com/yourusername/persist-ssh/issues"
+Homepage = "https://github.com/talwrii/persist-ssh"
+Repository = "https://github.com/talwrii/persist-ssh"
+Issues = "https://github.com/talwrii/persist-ssh/issues"
 
 [project.scripts]
 persist-ssh = "persist_ssh.main:main"

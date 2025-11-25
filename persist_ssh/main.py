@@ -9,20 +9,6 @@ from pathlib import Path
 DEFAULT_CONFIG = {
     'session_from_tmux_pane': False,
     'default_session_name': 'default',  # Changed from 'main' to 'default'
-    'dtach_install_command': {
-        'ubuntu': 'sudo apt update && sudo apt install -y dtach',
-        'debian': 'sudo apt update && sudo apt install -y dtach',
-        'redhat': 'sudo yum install -y dtach || sudo dnf install -y dtach',
-        'arch': 'sudo pacman -S dtach',
-        'alpine': 'sudo apk add dtach'
-    },
-    'mosh_install_command': {
-        'ubuntu': 'sudo apt update && sudo apt install -y mosh',
-        'debian': 'sudo apt update && sudo apt install -y mosh',
-        'redhat': 'sudo yum install -y mosh || sudo dnf install -y mosh',
-        'arch': 'sudo pacman -S mosh',
-        'alpine': 'sudo apk add mosh'
-    }
 }
 
 def get_config_path():
@@ -42,22 +28,6 @@ def load_config():
 session_from_tmux_pane = false
 # Default session name when not using tmux window names
 default_session_name = "default"
-
-# Commands to install dtach on different systems
-[dtach_install_command]
-ubuntu = "sudo apt update && sudo apt install -y dtach"
-debian = "sudo apt update && sudo apt install -y dtach"
-redhat = "sudo yum install -y dtach || sudo dnf install -y dtach"
-arch = "sudo pacman -S dtach"
-alpine = "sudo apk add dtach"
-
-# Commands to install mosh on different systems
-[mosh_install_command]
-ubuntu = "sudo apt update && sudo apt install -y mosh"
-debian = "sudo apt update && sudo apt install -y mosh"
-redhat = "sudo yum install -y mosh || sudo dnf install -y mosh"
-arch = "sudo pacman -S mosh"
-alpine = "sudo apk add mosh"
 """)
         print(f"Created default config at {config_path}")
         return DEFAULT_CONFIG
@@ -124,53 +94,6 @@ def detect_remote_os(host):
     else:
         return 'unknown'
 
-def install_dtach(host, config):
-    """Install dtach on remote host"""
-    os_type = detect_remote_os(host)
-    
-    install_commands = config.get('dtach_install_command', {})
-    
-    if os_type in install_commands:
-        cmd = install_commands[os_type]
-        print(f"Installing dtach on {host} ({os_type})...")
-        print("You may be prompted for your password...")
-        
-        # Use TTY for sudo commands
-        result = subprocess.run(['ssh', '-t', host, cmd])
-        
-        if result.returncode == 0:
-            print("dtach installed successfully")
-            return True
-        else:
-            print("Failed to install dtach")
-            return False
-    else:
-        print(f"Don't know how to install dtach on {os_type}. Please install manually.")
-        return False
-
-def install_mosh(host, config):
-    """Install mosh on remote host"""
-    os_type = detect_remote_os(host)
-    
-    install_commands = config.get('mosh_install_command', {})
-    
-    if os_type in install_commands:
-        cmd = install_commands[os_type]
-        print(f"Installing mosh on {host} ({os_type})...")
-        print("You may be prompted for your password...")
-        
-        # Use TTY for sudo commands
-        result = subprocess.run(['ssh', '-t', host, cmd])
-        
-        if result.returncode == 0:
-            print("mosh installed successfully")
-            return True
-        else:
-            print("Failed to install mosh")
-            return False
-    else:
-        print(f"Don't know how to install mosh on {os_type}. Please install manually.")
-        return False
 
 def list_remote_sessions(host):
     """List existing dtach sessions on remote host"""
